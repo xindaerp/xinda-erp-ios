@@ -1,0 +1,32 @@
+name: XindaERP
+options:
+  bundleIdPrefix: com.xinda
+  deploymentTarget: "15.0"
+  createIntermediateGroups: true
+settings:
+  IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+  TARGETED_DEVICE_FAMILY: "1,2"
+  SWIFT_VERSION: "5.0"
+targets:
+  XindaERP:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Source
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.xinda.erp
+      PRODUCT_NAME: XindaERP
+      INFOPLIST:
+        CFBundleDisplayName: 信达ERP
+        CFBundleName: XindaERP
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsArbitraryLoadsInWebContent: true
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+      SUPPORTED_PLATFORMS: iphoneos

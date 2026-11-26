@@ -1,0 +1,43 @@
+name: ① 构建未签名 IPA（交付签名平台用）
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 XcodeGen
+        run: brew install xcodegen
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate --spec project.yml
+
+      - name: 编译（不签名）
+        run: |
+          xcodebuild -project XindaERP.xcodeproj \
+            -scheme XindaERP \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$PWD/build/XindaERP.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            clean archive
+
+      - name: 打包成 IPA
+        run: |
+          mkdir -p build/Payload
+          cp -R "build/XindaERP.xcarchive/Products/Applications/XindaERP.app" build/Payload/
+          cd build
+          zip -qry "XindaERP-unsigned.ipa" Payload
+          ls -lh "XindaERP-unsigned.ipa"
+
+      - name: 上传成品
+        uses: actions/upload-artifact@v4
+        with:
+          name: XindaERP-unsigned-IPA
+          path: build/XindaERP-unsigned.ipa
+          if-no-files-found: error

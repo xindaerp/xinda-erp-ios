@@ -1,0 +1,116 @@
+name: ② 构建并签名 IPA（下载即装）
+
+# 使用前先在仓库 Settings -> Secrets and variables -> Actions 里配置：
+#   CERT_P12_BASE64    : 开发者证书 .p12 文件转 base64
+#   CERT_PASSWORD      : .p12 的密码
+#   PROVISION_PROFILE  : 描述文件 .mobileprovision 转 base64
+#   TEAM_ID            : 开发者 Team ID（10 位字母数字）
+#   PROFILE_UUID       : 描述文件的 UUID（或名称）
+# 配置方法见同目录手册。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 XcodeGen
+        run: brew install xcodegen
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate --spec project.yml
+
+      - name: 导入签名证书与描述文件
+        env:
+          CERT_P12_BASE64: ${{ secrets.CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+          PROVISION_PROFILE: ${{ secrets.PROVISION_PROFILE }}
+        run: |
+          set -euo pipefail
+
+          # 1) 建立临时钥匙串
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASS="$(openssl rand -base64 32 | tr -d '/+=')"
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+
+          # 2) 导入 p12 证书
+          echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$CERT_PASSWORD" \
+            -A -t cert -f pkcs12
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+          # 3) 导入描述文件
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          echo "$PROVISION_PROFILE" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+          cp "$RUNNER_TEMP/profile.mobileprovision" \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/embedded.mobileprovision"
+
+          # 4) 从描述文件解析 bundle id 与 UUID，供签名使用
+          /usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' /dev/stdin \
+            <<< "$(security cms -D -i "$RUNNER_TEMP/profile.mobileprovision")" || true
+
+      - name: 编译并签名
+        env:
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          xcodebuild -project XindaERP.xcodeproj \
+            -scheme XindaERP \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$PWD/build/XindaERP.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="iPhone Developer" \
+            clean archive
+
+      - name: 导出签名 IPA
+        env:
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          PROFILE_UUID: ${{ secrets.PROFILE_UUID }}
+        run: |
+          cat > "$PWD/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>development</string>
+            <key>teamID</key>
+            <string>$TEAM_ID</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.xinda.erp</key>
+              <string>$PROFILE_UUID</string>
+            </dict>
+            <key>compileBitcode</key>
+            <false/>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild -exportArchive \
+            -archivePath "$PWD/build/XindaERP.xcarchive" \
+            -exportOptionsPlist "$PWD/ExportOptions.plist" \
+            -exportPath "$PWD/build/export"
+
+          ls -lh "$PWD/build/export"
+
+      - name: 上传成品
+        uses: actions/upload-artifact@v4
+        with:
+          name: XindaERP-signed-IPA
+          path: build/export/*.ipa
+          if-no-files-found: error
