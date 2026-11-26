@@ -1,0 +1,50 @@
+# 信达ERP · 在线版 WebView IPA（未签名，供本机自签安装）
+# Codemagic 免费层：每月 500 分钟 mac_mini_m2，单并发，无需抢 GitHub runner
+
+workflows:
+  xindaerp-unsigned:
+    name: 信达ERP - 未签名 IPA
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+
+    environment:
+      vars:
+        XCODE_PROJECT: XindaERP.xcodeproj
+        XCODE_SCHEME: XindaERP
+        IPA_NAME: XindaERP-unsigned.ipa
+
+    scripts:
+      - name: 准备 XcodeGen
+        script: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen --version
+
+      - name: 生成 Xcode 工程
+        script: |
+          xcodegen generate --spec "$CM_BUILD_DIR/project.yml"
+          ls -la "$CM_BUILD_DIR/XindaERP.xcodeproj"
+
+      - name: 编译归档（不签名）
+        script: |
+          xcodebuild \
+            -project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$CM_BUILD_DIR/build/XindaERP.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            clean archive
+
+      - name: 打包 IPA
+        script: |
+          mkdir -p "$CM_BUILD_DIR/build/Payload"
+          cp -R "$CM_BUILD_DIR/build/XindaERP.xcarchive/Products/Applications/XindaERP.app" \
+                "$CM_BUILD_DIR/build/Payload/"
+          cd "$CM_BUILD_DIR/build"
+          zip -qry "$IPA_NAME" Payload
+          ls -lh "$IPA_NAME"
+          shasum -a 256 "$IPA_NAME"
+
+    artifacts:
+      - build/XindaERP-unsigned.ipa
