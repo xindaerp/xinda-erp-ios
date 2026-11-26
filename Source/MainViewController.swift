@@ -19,20 +19,43 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
-        title = "信达ERP"
         setupNavigationBar()
         setupWebView()
         loadServer()
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 网页顶到状态栏下方，避免被状态栏遮挡；底部留出让 Home 指示条的空间
+        let top = statusBarHeight()
+        let bottom = view.safeAreaInsets.bottom
+        let inset = UIEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
+        if webView.scrollView.contentInset != inset {
+            webView.scrollView.contentInset = inset
+        }
+    }
+
+    private func statusBarHeight() -> CGFloat {
+        if #available(iOS 13.0, *) {
+            return view.window?.windowScene?.statusBarManager?.statusBarFrame.height ?? 44
+        }
+        return UIApplication.shared.statusBarFrame.height
+    }
+
     // MARK: - UI
 
     private func setupNavigationBar() {
+        // 透明导航栏：去掉原生标题，让网页自带的公司抬头顶到最上面，只留右侧按钮
+        title = ""
+        let nav = navigationController?.navigationBar
+        nav?.setBackgroundImage(UIImage(), for: .default)
+        nav?.shadowImage = UIImage()
+        nav?.isTranslucent = true
+        nav?.prefersLargeTitles = false
         navigationItem.rightBarButtonItems = [
             UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(reloadPage)),
             UIBarButtonItem(title: "设置", style: .plain, target: self, action: #selector(showSettings)),
         ]
-        navigationController?.navigationBar.prefersLargeTitles = false
     }
 
     private func setupWebView() {
@@ -41,14 +64,21 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
 
-        webView = WKWebView(frame: view.bounds, configuration: config)
-        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        webView = WKWebView(frame: .zero, configuration: config)
+        webView.translatesAutoresizingMaskIntoConstraints = false
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
-        // 桌面 UA，避免 ERP 页面套用移动端布局导致错位
-        webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        // 桌面 UA 打底避免业务表格错位，追加 XindaMobileApp 标识让服务端输出移动版外壳
+        webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15 XindaMobileApp/1.0"
         view.addSubview(webView)
+        NSLayoutConstraint.activate([
+            webView.topAnchor.constraint(equalTo: view.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
     }
 
     // MARK: - 地址与加载
