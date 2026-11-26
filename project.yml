@@ -17,16 +17,6 @@ targets:
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.xinda.erp
       PRODUCT_NAME: XindaERP
-      INFOPLIST:
-        CFBundleDisplayName: 信达ERP
-        CFBundleName: XindaERP
-        NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
-          NSAllowsArbitraryLoadsInWebContent: true
-        UILaunchScreen: {}
-        UIRequiresFullScreen: true
-        UISupportedInterfaceOrientations:
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
+      GENERATE_INFOPLIST_FILE: NO
+      INFOPLIST_FILE: Info.plist
       SUPPORTED_PLATFORMS: iphoneos
