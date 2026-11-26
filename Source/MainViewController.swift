@@ -3,6 +3,7 @@ import WebKit
 
 /// 信达 ERP：一个 App 两个系统（ERP / 网站），原生顶部按钮 + 宫格入口来回切换。
 /// ERP 数据源在服务器，本机只负责显示；网站是一个用户自定义的网址。
+/// 安全：切到「网站」系统需输入切换密码（666），回 ERP 不设限。
 class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
 
     private var webView: WKWebView!
@@ -12,6 +13,9 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     private let activeSlotKey = "xinda_erp_active_slot"
     private let customURLKey = "xinda_erp_url_custom"
     private let siteURLKey = "xinda_erp_site_url"
+
+    /// 切换到「网站」系统的密码
+    private let switchPassword = "666"
 
     /// 每个 ERP 服务器槽位各自记住自己的地址：改了云端地址后切到 ECS 再切回来，仍是改过的地址
     private struct ServerSlot {
@@ -83,7 +87,7 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
         nav?.isTranslucent = true
         nav?.prefersLargeTitles = false
         navigationItem.leftBarButtonItem = UIBarButtonItem(
-            title: "网站", style: .plain, target: self, action: #selector(toggleSystem))
+            title: "切换", style: .plain, target: self, action: #selector(toggleSystem))
         navigationItem.rightBarButtonItems = [
             UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(reloadPage)),
             UIBarButtonItem(title: "设置", style: .plain, target: self, action: #selector(showSettings)),
@@ -92,7 +96,7 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     }
 
     private func updateSystemButton() {
-        navigationItem.leftBarButtonItem?.title = inSiteMode ? "回 ERP" : "网站"
+        navigationItem.leftBarButtonItem?.title = inSiteMode ? "回 ERP" : "切换"
     }
 
     private func setupWebView() {
@@ -121,20 +125,48 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
 
     @objc private func toggleSystem() {
         if inSiteMode {
-            switchToERP()
+            switchToERP()          // 回主系统不设限
         } else {
-            switchToSite()
+            switchToSite()         // 切到网站需密码
         }
     }
 
+    /// 切到「网站」系统的唯一入口：先校验密码，通过后才真正切换。
+    /// 顶部按钮、设置菜单、宫格 xinda://site 都走这里，无法绕过。
     private func switchToSite() {
+        let alert = UIAlertController(
+            title: "系统切换",
+            message: "请输入切换密码",
+            preferredStyle: .alert)
+        alert.addTextField { field in
+            field.placeholder = "切换密码"
+            field.isSecureTextEntry = true
+            field.keyboardType = .numberPad
+            field.textAlignment = .center
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "确定", style: .default) { [weak self, weak alert] _ in
+            let input = alert?.textFields?.first?.text ?? ""
+            guard let self = self else { return }
+            guard input == self.switchPassword else {
+                self.showMessage("密码错误，无法切换", title: "切换已取消")
+                return
+            }
+            self.performSiteSwitch()
+        })
+        present(alert, animated: true)
+    }
+
+    /// 密码已通过后执行：有地址直接切，没地址先让用户填（填完不再重复要密码）
+    private func performSiteSwitch() {
         let saved = UserDefaults.standard.string(forKey: siteURLKey) ?? ""
         if saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            showSiteURLInput()
+            showSiteURLInput(autoSwitch: true)
             return
         }
         inSiteMode = true
         updateSystemButton()
+        webView.customUserAgent = siteUA
         loadString(saved)
     }
 
@@ -212,7 +244,7 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
             self?.showCustomURLInput()
         })
         sheet.addAction(UIAlertAction(title: "设置网站地址…", style: .default) { [weak self] _ in
-            self?.showSiteURLInput()
+            self?.showSiteURLInput(autoSwitch: false)
         })
         sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
 
@@ -253,10 +285,14 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
         present(alert, animated: true)
     }
 
-    private func showSiteURLInput() {
+    /// autoSwitch=true：来自「切换」流程（密码已通过），保存后直接进网站系统；
+    /// autoSwitch=false：来自「设置 → 设置网站地址」，只保存，不触发切换。
+    private func showSiteURLInput(autoSwitch: Bool) {
         let alert = UIAlertController(
             title: "网站地址",
-            message: "输入你收藏的网站地址，点顶部「网站」即可打开",
+            message: autoSwitch
+                ? "首次使用，请输入你收藏的网站地址"
+                : "输入你收藏的网站地址；保存后点顶部「切换」进入",
             preferredStyle: .alert
         )
         alert.addTextField { field in
@@ -267,11 +303,12 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
             field.autocorrectionType = .no
         }
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "保存并打开", style: .default) { [weak self] _ in
+        alert.addAction(UIAlertAction(title: autoSwitch ? "保存并切换" : "保存", style: .default) { [weak self] _ in
             guard let text = alert.textFields?.first?.text,
-                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            UserDefaults.standard.set(text, forKey: self!.siteURLKey)
-            self?.switchToSite()
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let self = self else { return }
+            UserDefaults.standard.set(text, forKey: self.siteURLKey)
+            if autoSwitch { self.performSiteSwitch() }
         })
         present(alert, animated: true)
     }
