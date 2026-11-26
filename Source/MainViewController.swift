@@ -1,8 +1,8 @@
 import UIKit
 import WebKit
 
-/// 信达 ERP 在线版壳：WKWebView 加载服务器地址
-/// 数据源在服务器，本机只负责显示，不存业务数据
+/// 信达 ERP：一个 App 两个系统（ERP / 网站），原生顶部按钮 + 宫格入口来回切换。
+/// ERP 数据源在服务器，本机只负责显示；网站是一个用户自定义的网址。
 class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
 
     private var webView: WKWebView!
@@ -11,8 +11,9 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     private let legacyServerURLKey = "xinda_erp_server_url"
     private let activeSlotKey = "xinda_erp_active_slot"
     private let customURLKey = "xinda_erp_url_custom"
+    private let siteURLKey = "xinda_erp_site_url"
 
-    /// 每个服务器槽位各自记住自己的地址：改了云端地址后切到 ECS 再切回来，仍是改过的地址
+    /// 每个 ERP 服务器槽位各自记住自己的地址：改了云端地址后切到 ECS 再切回来，仍是改过的地址
     private struct ServerSlot {
         let name: String
         let key: String
@@ -23,10 +24,20 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
         ServerSlot(name: "云端版", key: "xinda_erp_url_cloud", fallback: "https://xinda-erp-14382.app.workbuddy.host"),
     ]
 
+    // 两个系统用不同 UA：ERP 用桌面 UA + 移动版标识；网站用标准 iPhone UA 显示手机版
+    private let erpUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15 XindaMobileApp/1.0"
+    private let siteUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+
+    /// 当前是否在网站系统。不持久化：每次冷启动强制回 ERP + ECS
+    private var inSiteMode = false
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         migrateLegacyURLIfNeeded()
+        // 冷启动强制回 ECS（不记忆上次的槽位和系统）
+        UserDefaults.standard.set(slots[0].key, forKey: activeSlotKey)
+        inSiteMode = false
         setupNavigationBar()
         setupWebView()
         loadServer()
@@ -47,7 +58,6 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // 网页顶到状态栏下方，避免被状态栏遮挡；底部留出让 Home 指示条的空间
         let top = statusBarHeight()
         let bottom = view.safeAreaInsets.bottom
         let inset = UIEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
@@ -66,17 +76,23 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     // MARK: - UI
 
     private func setupNavigationBar() {
-        // 透明导航栏：去掉原生标题，让网页自带的公司抬头顶到最上面，只留右侧按钮
         title = ""
         let nav = navigationController?.navigationBar
         nav?.setBackgroundImage(UIImage(), for: .default)
         nav?.shadowImage = UIImage()
         nav?.isTranslucent = true
         nav?.prefersLargeTitles = false
+        navigationItem.leftBarButtonItem = UIBarButtonItem(
+            title: "网站", style: .plain, target: self, action: #selector(toggleSystem))
         navigationItem.rightBarButtonItems = [
             UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(reloadPage)),
             UIBarButtonItem(title: "设置", style: .plain, target: self, action: #selector(showSettings)),
         ]
+        updateSystemButton()
+    }
+
+    private func updateSystemButton() {
+        navigationItem.leftBarButtonItem?.title = inSiteMode ? "回 ERP" : "网站"
     }
 
     private func setupWebView() {
@@ -91,8 +107,7 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
-        // 桌面 UA 打底避免业务表格错位，追加 XindaMobileApp 标识让服务端输出移动版外壳
-        webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15 XindaMobileApp/1.0"
+        webView.customUserAgent = erpUA
         view.addSubview(webView)
         NSLayoutConstraint.activate([
             webView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -100,6 +115,33 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
             webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+    }
+
+    // MARK: - 系统切换
+
+    @objc private func toggleSystem() {
+        if inSiteMode {
+            switchToERP()
+        } else {
+            switchToSite()
+        }
+    }
+
+    private func switchToSite() {
+        let saved = UserDefaults.standard.string(forKey: siteURLKey) ?? ""
+        if saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            showSiteURLInput()
+            return
+        }
+        inSiteMode = true
+        updateSystemButton()
+        loadString(saved)
+    }
+
+    private func switchToERP() {
+        inSiteMode = false
+        updateSystemButton()
+        loadServer()
     }
 
     // MARK: - 地址与加载
@@ -122,7 +164,12 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     }
 
     private func loadServer() {
-        var text = currentURL().trimmingCharacters(in: .whitespacesAndNewlines)
+        webView.customUserAgent = erpUA
+        loadString(currentURL())
+    }
+
+    private func loadString(_ text0: String) {
+        var text = text0.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.hasPrefix("http://") && !text.hasPrefix("https://") {
             text = "http://" + text
         }
@@ -134,25 +181,38 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     }
 
     @objc private func reloadPage() {
-        loadServer()
+        if inSiteMode {
+            webView.customUserAgent = siteUA
+            webView.reload()
+        } else {
+            loadServer()
+        }
     }
 
     // MARK: - 设置
 
     @objc private func showSettings() {
+        let sys = inSiteMode ? "网站" : "ERP【\(activeSlotName)】"
         let sheet = UIAlertController(
-            title: "服务器设置",
-            message: "当前【\(activeSlotName)】\n\(currentURL())",
+            title: "系统设置",
+            message: "当前系统：\(sys)\n\(inSiteMode ? (UserDefaults.standard.string(forKey: siteURLKey) ?? "") : currentURL())",
             preferredStyle: .actionSheet
         )
 
+        sheet.addAction(UIAlertAction(title: "系统切换（ERP ⇄ 网站）", style: .default) { [weak self] _ in
+            self?.toggleSystem()
+        })
         for slot in slots {
-            sheet.addAction(UIAlertAction(title: slot.name, style: .default) { [weak self] _ in
+            let name = "ERP - \(slot.name)"
+            sheet.addAction(UIAlertAction(title: name, style: .default) { [weak self] _ in
                 self?.selectSlot(slot)
             })
         }
-        sheet.addAction(UIAlertAction(title: "自定义地址…", style: .default) { [weak self] _ in
+        sheet.addAction(UIAlertAction(title: "自定义 ERP 地址…", style: .default) { [weak self] _ in
             self?.showCustomURLInput()
+        })
+        sheet.addAction(UIAlertAction(title: "设置网站地址…", style: .default) { [weak self] _ in
+            self?.showSiteURLInput()
         })
         sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
 
@@ -162,15 +222,19 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
         present(sheet, animated: true)
     }
 
-    /// 切换槽位只改"当前用哪个"，不动各槽位已保存的地址
+    /// 切换 ERP 槽位只改"当前用哪个"，不动各槽位已保存的地址
     private func selectSlot(_ slot: ServerSlot) {
         UserDefaults.standard.set(slot.key, forKey: activeSlotKey)
+        if inSiteMode {
+            inSiteMode = false
+            updateSystemButton()
+        }
         loadServer()
     }
 
     private func showCustomURLInput() {
         let alert = UIAlertController(
-            title: "自定义服务器地址",
+            title: "自定义 ERP 地址",
             message: "保存后将归入【\(activeSlotName)】，切走再切回仍用这个地址",
             preferredStyle: .alert
         )
@@ -189,13 +253,40 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
         present(alert, animated: true)
     }
 
-    /// 自定义地址写入当前槽位（这样改的就是"云端版"自己的地址，不会被默认值覆盖）
+    private func showSiteURLInput() {
+        let alert = UIAlertController(
+            title: "网站地址",
+            message: "输入你收藏的网站地址，点顶部「网站」即可打开",
+            preferredStyle: .alert
+        )
+        alert.addTextField { field in
+            field.text = UserDefaults.standard.string(forKey: self.siteURLKey)
+            field.placeholder = "https://example.com"
+            field.keyboardType = .URL
+            field.autocapitalizationType = .none
+            field.autocorrectionType = .no
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "保存并打开", style: .default) { [weak self] _ in
+            guard let text = alert.textFields?.first?.text,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            UserDefaults.standard.set(text, forKey: self!.siteURLKey)
+            self?.switchToSite()
+        })
+        present(alert, animated: true)
+    }
+
+    /// 自定义 ERP 地址写入当前槽位（这样改的就是"云端版"自己的地址，不会被默认值覆盖）
     private func saveCurrentSlotURL(_ url: String) {
         let d = UserDefaults.standard
         if let slot = activeSlot {
             d.set(url, forKey: slot.key)
         } else {
             d.set(url, forKey: customURLKey)
+        }
+        if inSiteMode {
+            inSiteMode = false
+            updateSystemButton()
         }
         loadServer()
     }
@@ -209,6 +300,22 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     }
 
     // MARK: - WKNavigationDelegate
+
+    /// 拦截网页里"网站"宫格按钮发出的 xinda://site 自定义协议，切到网站系统
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if let url = navigationAction.request.url, url.scheme?.lowercased() == "xinda" {
+            switch url.host?.lowercased() ?? "" {
+            case "site": switchToSite()
+            case "erp": switchToERP()
+            default: break
+            }
+            decisionHandler(.cancel)
+            return
+        }
+        decisionHandler(.allow)
+    }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         if isCancelledError(error) { return }
@@ -232,8 +339,8 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
             message: "\(error.localizedDescription)\n\n请检查网络，或到右上角\"设置\"更换服务器地址",
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: "重试", style: .default) { [weak self] _ in self?.loadServer() })
-        alert.addAction(UIAlertAction(title: "设置地址", style: .default) { [weak self] _ in self?.showSettings() })
+        alert.addAction(UIAlertAction(title: "重试", style: .default) { [weak self] _ in self?.reloadPage() })
+        alert.addAction(UIAlertAction(title: "设置", style: .default) { [weak self] _ in self?.showSettings() })
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         present(alert, animated: true)
     }
