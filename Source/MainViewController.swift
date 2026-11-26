@@ -168,7 +168,7 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView,
-                 createWebViewWithConfiguration configuration: WKWebViewConfiguration,
+                 createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction,
                  windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = navigationAction.request.url {
