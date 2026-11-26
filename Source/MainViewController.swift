@@ -6,22 +6,43 @@ import WebKit
 class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
 
     private var webView: WKWebView!
-    private let serverURLKey = "xinda_erp_server_url"
 
-    // 预置服务器，可自行增减。第一个为默认。
-    private let presetServers: [(name: String, url: String)] = [
-        ("ECS 版", "http://116.62.39.220:3000"),
-        ("云端版", "https://xinda-erp-14382.app.workbuddy.host"),
+    // 老版本只存一个地址，升级后用它做迁移，不再作为日常读写键
+    private let legacyServerURLKey = "xinda_erp_server_url"
+    private let activeSlotKey = "xinda_erp_active_slot"
+    private let customURLKey = "xinda_erp_url_custom"
+
+    /// 每个服务器槽位各自记住自己的地址：改了云端地址后切到 ECS 再切回来，仍是改过的地址
+    private struct ServerSlot {
+        let name: String
+        let key: String
+        let fallback: String
+    }
+    private let slots: [ServerSlot] = [
+        ServerSlot(name: "ECS 版", key: "xinda_erp_url_ecs", fallback: "http://116.62.39.220:3000"),
+        ServerSlot(name: "云端版", key: "xinda_erp_url_cloud", fallback: "https://xinda-erp-14382.app.workbuddy.host"),
     ]
-
-    private let defaultURL = "http://116.62.39.220:3000"
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
+        migrateLegacyURLIfNeeded()
         setupNavigationBar()
         setupWebView()
         loadServer()
+    }
+
+    /// 老版本只有一个全局地址键；升级后把它归到对应槽位，避免用户改过的地址丢失
+    private func migrateLegacyURLIfNeeded() {
+        let d = UserDefaults.standard
+        guard d.string(forKey: activeSlotKey) == nil,
+              let old = d.string(forKey: legacyServerURLKey), !old.isEmpty else { return }
+        if old.contains("116.62.39.220") {
+            d.set(slots[0].key, forKey: activeSlotKey)
+        } else {
+            d.set(old, forKey: slots[1].key)
+            d.set(slots[1].key, forKey: activeSlotKey)
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -83,8 +104,21 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
 
     // MARK: - 地址与加载
 
+    private var activeSlot: ServerSlot? {
+        let active = UserDefaults.standard.string(forKey: activeSlotKey) ?? slots[0].key
+        return slots.first(where: { $0.key == active })
+    }
+
+    private var activeSlotName: String {
+        activeSlot?.name ?? "自定义"
+    }
+
     private func currentURL() -> String {
-        UserDefaults.standard.string(forKey: serverURLKey) ?? defaultURL
+        let d = UserDefaults.standard
+        if let slot = activeSlot {
+            return d.string(forKey: slot.key) ?? slot.fallback
+        }
+        return d.string(forKey: customURLKey) ?? slots[0].fallback
     }
 
     private func loadServer() {
@@ -106,11 +140,15 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     // MARK: - 设置
 
     @objc private func showSettings() {
-        let sheet = UIAlertController(title: "服务器设置", message: "选择预置地址或手动输入", preferredStyle: .actionSheet)
+        let sheet = UIAlertController(
+            title: "服务器设置",
+            message: "当前【\(activeSlotName)】\n\(currentURL())",
+            preferredStyle: .actionSheet
+        )
 
-        for server in presetServers {
-            sheet.addAction(UIAlertAction(title: server.name, style: .default) { [weak self] _ in
-                self?.saveAndLoad(server.url)
+        for slot in slots {
+            sheet.addAction(UIAlertAction(title: slot.name, style: .default) { [weak self] _ in
+                self?.selectSlot(slot)
             })
         }
         sheet.addAction(UIAlertAction(title: "自定义地址…", style: .default) { [weak self] _ in
@@ -124,8 +162,18 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
         present(sheet, animated: true)
     }
 
+    /// 切换槽位只改"当前用哪个"，不动各槽位已保存的地址
+    private func selectSlot(_ slot: ServerSlot) {
+        UserDefaults.standard.set(slot.key, forKey: activeSlotKey)
+        loadServer()
+    }
+
     private func showCustomURLInput() {
-        let alert = UIAlertController(title: "自定义服务器地址", message: "例：http://116.62.39.220:3000", preferredStyle: .alert)
+        let alert = UIAlertController(
+            title: "自定义服务器地址",
+            message: "保存后将归入【\(activeSlotName)】，切走再切回仍用这个地址",
+            preferredStyle: .alert
+        )
         alert.addTextField { field in
             field.text = self.currentURL()
             field.keyboardType = .URL
@@ -136,13 +184,19 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
         alert.addAction(UIAlertAction(title: "保存并连接", style: .default) { [weak self] _ in
             guard let text = alert.textFields?.first?.text,
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-            self?.saveAndLoad(text)
+            self?.saveCurrentSlotURL(text)
         })
         present(alert, animated: true)
     }
 
-    private func saveAndLoad(_ url: String) {
-        UserDefaults.standard.set(url, forKey: serverURLKey)
+    /// 自定义地址写入当前槽位（这样改的就是"云端版"自己的地址，不会被默认值覆盖）
+    private func saveCurrentSlotURL(_ url: String) {
+        let d = UserDefaults.standard
+        if let slot = activeSlot {
+            d.set(url, forKey: slot.key)
+        } else {
+            d.set(url, forKey: customURLKey)
+        }
         loadServer()
     }
 
