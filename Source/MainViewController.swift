@@ -157,11 +157,19 @@ class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     // MARK: - WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        if isCancelledError(error) { return }
         showConnectError(error)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        if isCancelledError(error) { return }
         showConnectError(error)
+    }
+
+    /// -999 = NSURLErrorCancelled：新导航开始或 stopLoading 时旧请求被取消，属于正常现象，不应弹"连接失败"
+    private func isCancelledError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 
     private func showConnectError(_ error: Error) {
