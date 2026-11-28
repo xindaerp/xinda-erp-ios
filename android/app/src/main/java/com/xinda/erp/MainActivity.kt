@@ -50,6 +50,9 @@ class MainActivity : Activity() {
         private const val SITE_URL_KEY = "xinda_erp_site_url"
         private const val SWITCH_PASSWORD = "666"
 
+        // WebViewClient.ERROR_ABORTED = -1：导航被新请求取消（等同 iOS -999），非真实错误
+        private const val ERROR_ABORTED = -1
+
         private const val ERP_UA =
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15 XindaMobileApp/1.0"
         private const val SITE_UA =
@@ -181,7 +184,7 @@ class MainActivity : Activity() {
             override fun onReceivedError(
                 view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
                 // Android 的 ERROR_ABORTED(-1) 对应 iOS -999：导航被新请求取消，属正常现象
-                if (errorCode == WebViewClient.ERROR_ABORTED) return
+                if (errorCode == ERROR_ABORTED) return
                 showConnectError(description ?: "未知错误")
             }
 
@@ -190,7 +193,7 @@ class MainActivity : Activity() {
                 view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                 if (error == null) return
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                    error.errorCode == WebViewClient.ERROR_ABORTED) return
+                    error.errorCode == ERROR_ABORTED) return
                 showConnectError(
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
                         error.description.toString() else "连接失败")
