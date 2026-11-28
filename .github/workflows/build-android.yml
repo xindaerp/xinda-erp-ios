@@ -2,10 +2,15 @@ name: 信达ERP - Android APK
 
 # 推送任意代码即构建；也可用 workflow_dispatch 手动触发。
 # 只构建 android/ 子工程，不影响 iOS 的 Codemagic / build-unsigned 流程。
+# 直接用 ubuntu-latest 预装的 Android SDK，避免 setup-android@v3 与预装 cmdline-tools 版本冲突。
 on:
   push:
     branches: [main]
   workflow_dispatch:
+
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
 jobs:
   build:
@@ -23,11 +28,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Build Tools & Platform
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Accept SDK licenses & install platform 35
+        run: |
+          SDKMGR="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
+          "$SDKMGR" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle 8.7
         uses: gradle/actions/setup-gradle@v3
